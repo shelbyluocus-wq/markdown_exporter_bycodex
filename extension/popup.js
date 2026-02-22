@@ -1,10 +1,12 @@
 ﻿function sanitizeFilename(title) {
-  return (
-    (title || 'article')
-      .replace(/[\\/:*?"<>|]/g, '_')
-      .replace(/\s+/g, '_')
-      .substring(0, 80) + '.md'
-  );
+  const safeBase = (title || 'article')
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '');
+
+  const finalBase = (safeBase || 'article').substring(0, 80);
+  return `${finalBase}.md`;
 }
 
 function setStatus(text, type = 'normal') {
@@ -27,6 +29,14 @@ async function getActiveTab() {
   return tabs[0];
 }
 
+// 当页面中没有 content script 时，主动注入并重试
+async function ensureContentScriptInjected(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['lib/Readability.js', 'lib/Turndown.js', 'content_script.js']
+  });
+}
+
 async function sendToContent(action) {
   const tab = await getActiveTab();
   if (!tab.id) {
@@ -34,15 +44,39 @@ async function sendToContent(action) {
   }
 
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { action });
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, { action });
+    } catch (sendError) {
+      const msg = sendError?.message || '';
+      const shouldRetry =
+        msg.includes('Receiving end does not exist') ||
+        msg.includes('Could not establish connection');
+
+      if (!shouldRetry) {
+        throw sendError;
+      }
+
+      await ensureContentScriptInjected(tab.id);
+      response = await chrome.tabs.sendMessage(tab.id, { action });
+    }
+
     if (!response || !response.success) {
       throw new Error(response?.error || '内容脚本返回失败');
     }
     return response;
   } catch (error) {
+    const message = error?.message || '未知错误';
+    if (
+      message.includes('Cannot access') ||
+      message.includes('cannot be scripted') ||
+      message.includes('chrome://')
+    ) {
+      throw new Error('当前页面受浏览器限制（如 chrome://、应用商店页），无法注入脚本');
+    }
     throw new Error(
       '页面暂不支持提取（可能受 CSP 限制或页面尚未加载完成）：' +
-        (error?.message || '未知错误')
+        message
     );
   }
 }
@@ -62,7 +96,7 @@ async function loadArticleSummary() {
   setStatus('正在提取正文...');
   try {
     const data = await sendToContent('extract');
-    const pageTitle = data.title || '未命名文章';
+    const pageTitle = data.displayTitle || data.title || '未命名文章';
     const excerpt = data.excerpt || '未获取到摘要，可能是结构化较弱的页面。';
 
     const titleEl = document.getElementById('pageTitle');
@@ -99,7 +133,8 @@ async function handleDownloadMarkdown() {
   try {
     const data = await sendToContent('extract');
     const markdown = data.markdown || '';
-    const title = data.title || 'article';
+    // 下载文件名仅使用净化后的纯标题，不拼接平台/作者信息
+    const title = data.filenameTitle || data.title || 'article';
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
 

@@ -50,6 +50,123 @@ function normalizeLazyImages(root) {
   });
 }
 
+// 读取 meta 标签内容
+function getMetaContent(selectors) {
+  for (const selector of selectors) {
+    const el = document.querySelector(selector);
+    const value = el?.getAttribute('content')?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return '';
+}
+
+// 补充作者信息，优先 meta，再尝试常见 DOM 选择器
+function resolveByline(article) {
+  const bylineFromMeta = getMetaContent([
+    'meta[name="author"]',
+    'meta[property="author"]',
+    'meta[property="article:author"]',
+    'meta[name="twitter:creator"]'
+  ]);
+  if (article.byline) {
+    return article.byline;
+  }
+  if (bylineFromMeta) {
+    return bylineFromMeta.replace(/^@/, '');
+  }
+
+  const bylineSelectors = [
+    '[rel="author"]',
+    '[itemprop="author"]',
+    '.author',
+    '.byline',
+    '[class*="author"]'
+  ];
+  for (const selector of bylineSelectors) {
+    const el = document.querySelector(selector);
+    const text = el?.textContent?.trim();
+    if (text && text.length <= 60) {
+      return text.replace(/^作者[:：]\s*/, '');
+    }
+  }
+  return '';
+}
+
+function resolveSiteName(article) {
+  return (
+    article.siteName ||
+    getMetaContent([
+      'meta[property="og:site_name"]',
+      'meta[name="application-name"]',
+      'meta[property="al:android:app_name"]'
+    ]) ||
+    location.hostname
+  );
+}
+
+function resolveTitle(article) {
+  const rawTitle =
+    article.title ||
+    getMetaContent(['meta[property="og:title"]', 'meta[name="twitter:title"]']) ||
+    document.querySelector('h1')?.textContent?.trim() ||
+    document.title;
+  return rawTitle;
+}
+
+// 生成用于文件名的纯标题，去掉常见平台前缀/计数等噪音
+function normalizeTitleForFilename(title) {
+  let clean = (title || '').trim();
+  if (!clean) {
+    return '';
+  }
+
+  // 去掉浏览器标签通知计数，例如 "(1) "
+  clean = clean.replace(/^\(\d+\)\s*/, '');
+
+  // 去掉常见平台前缀，例如 "X (formerly Twitter): "
+  clean = clean.replace(/^(X \(formerly Twitter\)|Twitter|X)\s*[:：]\s*/i, '');
+
+  // 针对 X/Twitter 常见标题："X 上的 user：“正文”"
+  if (/^(?:X|Twitter)\s*上的/.test(clean)) {
+    clean = clean.replace(/^(?:X|Twitter)\s*上的[^：:]+[：:]\s*/, '');
+  }
+
+  // 移除首尾中英文引号
+  clean = clean.replace(/^[“”"'`]+/, '').replace(/[“”"'`]+$/, '');
+
+  // 防御性兜底
+  return clean.trim();
+}
+
+function buildDisplayTitle(article) {
+  const title = article.title || document.title;
+  const byline = article.byline || '';
+  const siteName = article.siteName || '';
+
+  if (byline && siteName) {
+    return `${siteName}上的${byline}：${title}`;
+  }
+  if (byline) {
+    return `${byline}：${title}`;
+  }
+  if (siteName) {
+    return `${siteName}：${title}`;
+  }
+  return title;
+}
+
+function enrichArticleMeta(rawArticle) {
+  const article = { ...rawArticle };
+  article.title = resolveTitle(article);
+  article.byline = resolveByline(article);
+  article.siteName = resolveSiteName(article);
+  article.filenameTitle = normalizeTitleForFilename(article.title) || article.title || document.title;
+  article.displayTitle = buildDisplayTitle(article);
+  return article;
+}
+
 // 从当前页面提取正文，优先 Readability，失败时走选择器降级方案
 function extractArticle() {
   const docClone = document.cloneNode(true);
@@ -80,29 +197,29 @@ function extractArticle() {
       if (el && el.innerText && el.innerText.trim().length > 200) {
         const clone = el.cloneNode(true);
         normalizeLazyImages(clone);
-        return {
+        return enrichArticleMeta({
           title: document.title,
           content: clone.innerHTML,
           byline: '',
           siteName: location.hostname,
           excerpt: el.innerText.trim().slice(0, 100)
-        };
+        });
       }
     }
 
     const bodyClone = document.body.cloneNode(true);
     normalizeLazyImages(bodyClone);
 
-    return {
+    return enrichArticleMeta({
       title: document.title,
       content: bodyClone.innerHTML,
       byline: '',
       siteName: location.hostname,
       excerpt: ''
-    };
+    });
   }
 
-  return article;
+  return enrichArticleMeta(article);
 }
 
 // 将文章内容转换为 Markdown，同时补充元数据
@@ -162,8 +279,9 @@ function articleToMarkdown(article) {
     }
   });
 
+  const headingTitle = article.displayTitle || article.title || document.title;
   const meta = [
-    `# ${article.title || document.title}`,
+    `# ${headingTitle}`,
     article.byline ? `> 作者：${article.byline}` : '',
     article.siteName ? `> 来源：${article.siteName}` : '',
     `> 原文：${location.href}`,
@@ -186,6 +304,7 @@ function exportToPDF(article) {
 
   const printDoc = iframe.contentDocument || iframe.contentWindow.document;
   const source = article.siteName || location.hostname;
+  const printTitle = article.displayTitle || article.title || document.title;
 
   printDoc.open();
   printDoc.write(`
@@ -193,7 +312,7 @@ function exportToPDF(article) {
 <html lang="zh">
 <head>
   <meta charset="UTF-8" />
-  <title>${article.title || document.title}</title>
+  <title>${printTitle}</title>
   <style>
     @page { margin: 2cm; size: A4; }
     * { box-sizing: border-box; }
@@ -234,7 +353,7 @@ function exportToPDF(article) {
   <div class="article-meta">
     <div>来源：${source} | 原文：${location.href}</div>
   </div>
-  <h1>${article.title || document.title}</h1>
+  <h1>${printTitle}</h1>
   ${article.content || ''}
 </body>
 </html>
@@ -254,7 +373,7 @@ function exportToPDF(article) {
 }
 
 function buildPreviewHTML(article) {
-  const title = article.title || document.title;
+  const title = article.displayTitle || article.title || document.title;
   const source = article.siteName || location.hostname;
   return `
 <!DOCTYPE html>
@@ -317,6 +436,10 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         success: true,
         markdown,
         title: article.title || document.title,
+        filenameTitle: article.filenameTitle || article.title || document.title,
+        displayTitle: article.displayTitle || article.title || document.title,
+        byline: article.byline || '',
+        siteName: article.siteName || location.hostname,
         excerpt: article.excerpt || ''
       });
       return true;
@@ -335,6 +458,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       sendResponse({
         success: true,
         title: article.title || document.title,
+        displayTitle: article.displayTitle || article.title || document.title,
         html
       });
       return true;
