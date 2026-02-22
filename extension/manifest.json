@@ -1,0 +1,39 @@
+﻿{
+  "manifest_version": 3,
+  "name": "Article Extractor",
+  "version": "1.0.0",
+  "description": "提取网页文章为 Markdown 或 PDF",
+  "permissions": ["activeTab", "scripting", "downloads", "clipboardWrite", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon48.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["lib/Readability.js", "lib/Turndown.js", "content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["print.css"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "commands": {
+    "extract-markdown": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+M",
+        "mac": "Command+Shift+M"
+      },
+      "description": "打开提取弹窗"
+    }
+  }
+}

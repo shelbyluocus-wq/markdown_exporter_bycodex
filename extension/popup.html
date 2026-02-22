@@ -1,0 +1,32 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Article Extractor</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="panel">
+    <header class="panel-header">
+      <h1>Article Extractor</h1>
+      <p id="pageTitle" title="">正在读取页面标题...</p>
+    </header>
+
+    <section class="preview">
+      <p id="excerpt">正在提取文章摘要...</p>
+    </section>
+
+    <section class="actions">
+      <button id="copyBtn" type="button">📋 复制 Markdown</button>
+      <button id="downloadBtn" type="button">⬇ 下载 .md 文件</button>
+      <button id="pdfBtn" type="button">🖨 导出 PDF</button>
+      <button id="previewBtn" type="button">👁 预览正文</button>
+    </section>
+
+    <footer class="status" id="statusBar">就绪</footer>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
